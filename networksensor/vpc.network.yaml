@@ -305,18 +305,14 @@ Resources:
       UserData:
         !Base64 |
           #!/bin/bash
-          apt update
-          sleep 10
-          apt install -y apt-transport-https ca-certificates curl gnupg python3-pip lsb-release
-          sleep 60
-          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-          sleep 10
-          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-          apt update
-          sleep 10
-          apt install -y docker-ce docker-ce-cli containerd.io
-          sleep 60
-          docker run --rm -it -d -p 80:80 vulnerables/web-dvwa
+          # Update system and install Docker on Amazon Linux 2
+          yum update -y
+          amazon-linux-extras install docker -y
+          service docker start
+          # Optionally add ec2-user to docker group for non-root access
+          usermod -a -G docker ec2-user
+          # Run the DVWA container on port 80
+          docker run --rm -d -p 80:80 vulnerables/web-dvwa
 
   # Windows machine in the Protected-Private Subnet (using dynamic reference for Windows AMI)
   PrivateWin: 
