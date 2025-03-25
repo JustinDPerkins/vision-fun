@@ -1,0 +1,392 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  VPC - Quick Deploy for Network Sensor
+
+Parameters:
+  EnvironmentName:
+    Description: An environment name that is prefixed to resource names
+    Type: String
+    Default: V1NDR-Workshop
+
+  InspectionVPCCIDR:
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+    Default: 10.10.0.0/16
+
+  ProtectedPublicSubnetCIDR:
+    Description: Please enter the IP range (CIDR notation) for the PROTECTED-PUBLIC subnet
+    Type: String
+    Default: 10.10.10.0/24
+
+  ProtectedPublicSubnetAZ: 
+    Description: Please enter the Availability Zone that you want to use for the PROTECTED-PUBLIC subnet
+    Type: String
+    Default: us-east-1a
+
+  ProtectedPrivateSubnetCIDR:
+    Description: Please enter the IP range (CIDR notation) for the PROTECTED-PRIVATE subnet
+    Type: String
+    Default: 10.10.20.0/24
+
+  ProtectedPrivateSubnetAZ:
+    Description: Please enter the Availability Zone that you want to use for the PROTECTED-PRIVATE subnet
+    Type: String
+    Default: us-east-1a
+
+  KeyPair:
+    Description: Please enter the valid Key Pair for your region
+    Type: String
+  
+  MyPublicIP:
+    Description: >
+      Please enter your public IP with CIDR (e.g. 191.162.228.91/32). As an example, you can use
+      https://wtfismyip.com/text or https://ipinfo.io/ip. It will be used to allow you to access DVWA through HTTP (TCP/80).
+    Type: String
+
+Resources:
+  # Creating VPC that will be used in the demo environment
+  ndrVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref InspectionVPCCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "V1 NDR VPC - ${EnvironmentName}"
+        - Key: VPC Name
+          Value: "V1 NDR VPC"
+        - Key: Service
+          Value: "Vision One Network Sensor"
+
+  # Creating an Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "IGW - ${EnvironmentName}"
+        - Key: Service
+          Value: "Vision One Network Sensor"
+
+  # Attaching the Internet Gateway to the VPC
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref ndrVPC
+
+  # Creating the Protected-Public Subnet
+  ProtectedPublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ndrVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !Ref ProtectedPublicSubnetCIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "Protected-Public Subnet ${EnvironmentName}"
+
+  # Creating the Protected-Private Subnet
+  ProtectedPrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ndrVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !Ref ProtectedPrivateSubnetCIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "Protected-Private Subnet ${EnvironmentName}"
+
+  # Creating the Elastic IP for the NAT Gateway
+  NatGatewayEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  # Creating the NAT Gateway in the Protected-Public Subnet
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP.AllocationId
+      SubnetId: !Ref ProtectedPublicSubnet
+
+  # Creating the Public Route Table
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ndrVPC
+      Tags:
+        - Key: Name
+          Value: !Sub "Protected Public Routes - ${EnvironmentName}"
+
+  # Adding a default route in the Public Route Table
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  # Associating the Protected-Public Subnet with the Public Route Table
+  ProtectedPublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref ProtectedPublicSubnet
+
+  # Creating the Private Route Table
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ndrVPC
+      Tags:
+        - Key: Name
+          Value: !Sub "Private Routes - ${EnvironmentName}"
+
+  # Adding a default route in the Private Route Table
+  DefaultPrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  # Associating the Protected-Private Subnet with the Private Route Table
+  ProtectedPrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref ProtectedPrivateSubnet
+
+  # Security Group with only VPC-based ingress rules
+  NoIngressSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "no-ingress-sg"
+      GroupDescription: "Security group with no ingress rule"
+      VpcId: !Ref ndrVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 10.10.0.0/16
+        - IpProtocol: tcp
+          FromPort: 3389
+          ToPort: 3389
+          CidrIp: 10.10.0.0/16
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: 0.0.0.0/0
+
+  # Security Group for public access (SSH, RDP, HTTP)
+  PublicAccessSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "public-ingress-sg"
+      GroupDescription: "Security group for public ingress"
+      VpcId: !Ref ndrVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 10.10.0.0/16
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref MyPublicIP
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 3389
+          ToPort: 3389
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: 0.0.0.0/0
+
+  # EC2 Role for instance creation
+  EC2Role:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub "EC2Role-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+
+  # Instance profile for EC2 instances
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref EC2Role
+
+  # Linux Bastion Host (using dynamic reference for Linux AMI)
+  BastionLinux: 
+    Type: AWS::EC2::Instance
+    Properties: 
+      ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}"
+      InstanceType: t3.micro
+      KeyName: !Ref KeyPair
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      Tags:
+        - Key: Name
+          Value: "BastionLinux"
+        - Key: Project
+          Value: "Vision One Network Sensor Workshop"
+      SubnetId: !Ref ProtectedPublicSubnet
+      SecurityGroupIds:
+        - !Ref PublicAccessSecurityGroup
+      BlockDeviceMappings: 
+        - DeviceName: /dev/sdm
+          Ebs: 
+            DeleteOnTermination: true
+            VolumeSize: 20
+
+  # Windows Bastion Host (using dynamic reference for Windows AMI)
+  BastionWin: 
+    Type: AWS::EC2::Instance
+    Properties: 
+      ImageId: "{{resolve:ssm:/aws/service/ami-windows-latest/EC2LaunchV2-Windows_Server-2016-English-Full-Base}}"
+      InstanceType: t3.small
+      KeyName: !Ref KeyPair
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      Tags:
+        - Key: Name
+          Value: "BastionWin"
+        - Key: Project
+          Value: "Vision One Network Sensor Workshop"
+      SubnetId: !Ref ProtectedPublicSubnet
+      SecurityGroupIds:
+        - !Ref PublicAccessSecurityGroup
+      BlockDeviceMappings: 
+        - DeviceName: /dev/sdm
+          Ebs: 
+            DeleteOnTermination: true
+            VolumeSize: 20
+
+  # DVWA host (Linux) – using dynamic reference for Linux AMI
+  DVWA: 
+    Type: AWS::EC2::Instance
+    Properties: 
+      ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}"
+      InstanceType: t3.micro
+      KeyName: !Ref KeyPair
+      Tags:
+        - Key: Name
+          Value: "DVWA"
+        - Key: Project
+          Value: "Vision One Network Sensor Workshop"
+      SubnetId: !Ref ProtectedPublicSubnet
+      SecurityGroupIds:
+        - !Ref PublicAccessSecurityGroup
+      BlockDeviceMappings: 
+        - DeviceName: /dev/sdm
+          Ebs:
+            DeleteOnTermination: true
+            VolumeSize: 20
+      UserData:
+        !Base64 |
+          #!/bin/bash
+          apt update
+          sleep 10
+          apt install -y apt-transport-https ca-certificates curl gnupg python3-pip lsb-release
+          sleep 60
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+          sleep 10
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+          apt update
+          sleep 10
+          apt install -y docker-ce docker-ce-cli containerd.io
+          sleep 60
+          docker run --rm -it -d -p 80:80 vulnerables/web-dvwa
+
+  # Windows machine in the Protected-Private Subnet (using dynamic reference for Windows AMI)
+  PrivateWin: 
+    Type: AWS::EC2::Instance
+    Properties: 
+      ImageId: "{{resolve:ssm:/aws/service/ami-windows-latest/EC2LaunchV2-Windows_Server-2016-English-Full-Base}}"
+      InstanceType: t3.small
+      KeyName: !Ref KeyPair
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      Tags:
+        - Key: Name
+          Value: "PrivateWin"
+        - Key: Project
+          Value: "Vision One Network Sensor Workshop"
+      SubnetId: !Ref ProtectedPrivateSubnet
+      SecurityGroupIds:
+        - !Ref NoIngressSecurityGroup
+      BlockDeviceMappings: 
+        - DeviceName: /dev/sdm
+          Ebs:
+            DeleteOnTermination: true
+            VolumeSize: 20
+
+  # Linux machine in the Protected-Private Subnet (using dynamic reference for Linux AMI)
+  PrivateLinux: 
+    Type: AWS::EC2::Instance
+    Properties: 
+      ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}"
+      InstanceType: t3.small
+      KeyName: !Ref KeyPair
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      Tags:
+        - Key: Name
+          Value: "PrivateLinux"
+        - Key: Project
+          Value: "Vision One Network Sensor Workshop"
+      SubnetId: !Ref ProtectedPrivateSubnet
+      SecurityGroupIds:
+        - !Ref NoIngressSecurityGroup
+      BlockDeviceMappings: 
+        - DeviceName: /dev/sdm
+          Ebs:
+            DeleteOnTermination: true
+            VolumeSize: 20
+
+Outputs:
+  VPC:
+    Description: A reference to the created VPC
+    Value: !Ref ndrVPC
+
+  ProtectedPublicSubnet:
+    Description: A reference to the public subnet in the 1st Availability Zone
+    Value: !Ref ProtectedPublicSubnet
+
+  ProtectedPrivateSubnet:
+    Description: A reference to the private subnet in the 1st Availability Zone
+    Value: !Ref ProtectedPrivateSubnet
+
+  NoIngressSecurityGroup:
+    Description: Security group with no ingress rule
+    Value: !Ref NoIngressSecurityGroup
+
+  DVWAPublicDNSName:
+    Description: Export the DVWA instance Public DNS Name
+    Value: !GetAtt DVWA.PublicDnsName
+
+  BastionLinuxPublicDNSName:
+    Description: Export the BastionLinux instance Public DNS Name
+    Value: !GetAtt BastionLinux.PublicDnsName
+
+  BastionWindownsPublicDNSName:
+    Description: Export the BastionWin instance Public DNS Name
+    Value: !GetAtt BastionWin.PublicDnsName
