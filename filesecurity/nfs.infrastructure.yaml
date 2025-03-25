@@ -1,0 +1,255 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS NFS Scan - On-Premises Mock
+Metadata:
+  License:
+    Description: |
+      NFS Quick Deploy for File Security
+
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Parameters:
+          - kp
+      - Label:
+          default: AMI IDs (do not edit)
+        Parameters:
+          - linuxAmi
+    ParameterLabels:
+      kp:
+        default: 'EC2 Key Pair Name (optional):'
+      linuxAmi:
+        default: 'Linux'
+
+Parameters:
+  kp:
+    Description: 'A key pair is optional.  If not specified, you can access instances through the EC2 console using Session Manager or EC2 Instance Connect.'
+    #Type: AWS::EC2::KeyPair::KeyName
+    Type: String
+  linuxAmi:
+    Type : 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+    AllowedValues: ['/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2']
+
+Conditions:
+  # Allow users to optionally specify an EC2 key pair to use for the
+  # instance resources created in this template.  If not specified then
+  # users can still use Session Manager from the AWS console.
+  UseEc2Keypair: !Not [ !Equals ['', !Ref 'kp'] ]
+
+Resources:
+
+  # Create a dedicated VPC with internet connectivity
+  nfsVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.11.12.0/24
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+      InstanceTenancy: default
+      Tags:
+      - Key: Name
+        Value: FileSecurityWorkshopVPC
+  nfsSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref 'nfsVPC'
+      CidrBlock: 10.11.12.0/24
+      MapPublicIpOnLaunch: 'True'
+      Tags:
+      - Key: Name
+        Value: FileSecurityWorkshopSubnet1
+  nfsInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value: FileSecurityWorkshopIGW
+  nfsAttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref 'nfsVPC'
+      InternetGatewayId: !Ref 'nfsInternetGateway'
+  nfsRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'nfsVPC'
+      Tags:
+      - Key: Name
+        Value: FileSecurityWorkshopRouteTable
+  nfsSubnet1RouteAssociaton:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref 'nfsSubnet1'
+      RouteTableId: !Ref 'nfsRouteTable'
+  nfsRoutetoInternet:
+    Type: AWS::EC2::Route
+    DependsOn: nfsInternetGateway
+    Properties:
+      RouteTableId: !Ref 'nfsRouteTable'
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref 'nfsInternetGateway'
+
+  # We use the same security group for all four resources.  Technically port 80
+  # isn't needed for the NFS server and the application server, but nothing is
+  # listening on those ports on those servers.
+  nfsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: File Security Workshop - Security Group for all resources
+      VpcId: !Ref 'nfsVPC'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: '0.0.0.0/0'
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: '0.0.0.0/0'
+
+  # We use this so we can limit access on this port to the SG
+  nfsSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: nfsSecurityGroup
+    Properties:
+      GroupId: !Ref 'nfsSecurityGroup'
+      IpProtocol: tcp
+      ToPort: '2049'
+      FromPort: '2049'
+      SourceSecurityGroupId: !Ref 'nfsSecurityGroup'
+
+
+  nfsServerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref 'nfsServerIamRole'
+  nfsServerIamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+        Version: '2012-10-17'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+  nfsServerRolePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:ListBucket
+            Resource:
+              - arn:aws:s3:::aft-vbi-pds
+          - Effect: Allow
+            Action:
+              - s3:GetObject
+            Resource:
+              - arn:aws:s3:::aft-vbi-pds/*
+        Version: '2012-10-17'
+      PolicyName: policy
+      Roles:
+        - !Ref 'nfsServerIamRole'
+  nfsServer:
+    Type: AWS::EC2::Instance
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT30M
+        Count: 1
+    Metadata:
+      AWS::CloudFormation::Init:
+        config:
+          files:
+            /opt/aws/cfn/initdata.sh:
+              content: !Sub |
+                #!/bin/bash
+                mkdir -p /media/data/images
+                for i in {00001..00200}; do
+                  aws s3 cp s3://aft-vbi-pds/bin-images/$i.jpg /media/data/images/ >> /tmp/sync
+                done
+                echo "/media/data *(rw,no_root_squash)" > /tmp/exports
+                sudo cp /tmp/exports /etc/exports
+                sudo service nfs restart
+          commands:
+            1-initData:
+              command: "bash /opt/aws/cfn/initdata.sh"
+            2-finishUp:
+              command: !Sub "/opt/aws/bin/cfn-signal -e 0 --stack ${AWS::StackId} --resource nfsServer --region ${AWS::Region}"
+    Properties:
+      ImageId: !Ref linuxAmi
+      InstanceType: t2.micro
+      IamInstanceProfile: !Ref 'nfsServerInstanceProfile'
+      Tags:
+        - Key: Name
+          Value: !Join
+            - ''
+            - - NfsServer (
+              - !Ref 'AWS::StackName'
+              - )
+      KeyName: !If [ 'UseEc2Keypair', !Ref 'kp', !Ref 'AWS::NoValue' ]
+      InstanceInitiatedShutdownBehavior: terminate
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: '8'
+            DeleteOnTermination: 'true'
+            VolumeType: gp2
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: 'true'
+          DeviceIndex: '0'
+          GroupSet:
+            - !Ref 'nfsSecurityGroup'
+          SubnetId: !Ref 'nfsSubnet1'
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            /opt/aws/bin/cfn-init -v -s ${AWS::StackId} -r nfsServer --region ${AWS::Region}
+
+  appServer:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref linuxAmi
+      InstanceType: t2.micro
+      IamInstanceProfile: !Ref 'nfsServerInstanceProfile'
+      Tags:
+        - Key: Name
+          Value: !Join
+            - ''
+            - - ApplicationServer (
+              - !Ref 'AWS::StackName'
+              - )
+      KeyName: !If [ 'UseEc2Keypair', !Ref 'kp', !Ref 'AWS::NoValue' ]
+      InstanceInitiatedShutdownBehavior: terminate
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: '8'
+            DeleteOnTermination: 'true'
+            VolumeType: gp2
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: 'true'
+          DeviceIndex: '0'
+          GroupSet:
+            - !Ref 'nfsSecurityGroup'
+          SubnetId: !Ref 'nfsSubnet1'
+      UserData: !Base64
+        Fn::Join:
+          - ''
+          - - "#!/bin/bash\n"
+            - "sudo mkdir /mnt/data\n"
+
+Outputs:
+  nfsServerPrivateIP:
+    Description: NFS Server Private IP Address
+    Value: !GetAtt nfsServer.PrivateIp
+  appServerPrivateIP:
+    Description: Application Server Private IP Address
+    Value: !GetAtt appServer.PrivateIp
