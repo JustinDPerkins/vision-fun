@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-# Define variables for the new user
-NEW_USER="new-iam-user"  # Change as needed
+# Generate a random IAM user name using the current timestamp and a random number
+NEW_USER="newuser-$(date +%s)-$RANDOM"
 POLICY_ARN="arn:aws:iam::aws:policy/AdministratorAccess"
 
 echo "Creating IAM user: ${NEW_USER}"
