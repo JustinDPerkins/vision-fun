@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: AWS NFS Scan - On-Premises Mock
+Description: NFS Quick Deploy
 Metadata:
   License:
     Description: |
@@ -18,7 +18,6 @@ Metadata:
         default: 'EC2 Key Pair Name (optional):'
       linuxAmi:
         default: 'Linux'
-
 Parameters:
   kp:
     Description: 'A key pair is optional.  If not specified, you can access instances through the EC2 console using Session Manager or EC2 Instance Connect.'
@@ -37,57 +36,103 @@ Conditions:
 
 Resources:
 
-  # Create a dedicated VPC with internet connectivity
   nfsVPC:
     Type: AWS::EC2::VPC
     Properties:
-      CidrBlock: 10.11.12.0/24
-      EnableDnsSupport: 'true'
-      EnableDnsHostnames: 'true'
+      CidrBlock: 10.11.12.0/23
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
       InstanceTenancy: default
       Tags:
       - Key: Name
         Value: FileSecurityWorkshopVPC
-  nfsSubnet1:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref 'nfsVPC'
-      CidrBlock: 10.11.12.0/24
-      MapPublicIpOnLaunch: 'True'
-      Tags:
-      - Key: Name
-        Value: FileSecurityWorkshopSubnet1
+
   nfsInternetGateway:
     Type: AWS::EC2::InternetGateway
     Properties:
       Tags:
       - Key: Name
         Value: FileSecurityWorkshopIGW
+
   nfsAttachGateway:
     Type: AWS::EC2::VPCGatewayAttachment
     Properties:
-      VpcId: !Ref 'nfsVPC'
-      InternetGatewayId: !Ref 'nfsInternetGateway'
+      VpcId: !Ref nfsVPC
+      InternetGatewayId: !Ref nfsInternetGateway
+
+  nfsPublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref nfsVPC
+      CidrBlock: 10.11.12.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: nfsPublicSubnet
+
+  nfsPrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref nfsVPC
+      CidrBlock: 10.11.13.0/24
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: nfsPrivateSubnet
+
   nfsRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
-      VpcId: !Ref 'nfsVPC'
+      VpcId: !Ref nfsVPC
       Tags:
-      - Key: Name
-        Value: FileSecurityWorkshopRouteTable
-  nfsSubnet1RouteAssociaton:
+        - Key: Name
+          Value: nfsPublicRouteTable
+
+  nfsPublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref nfsRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref nfsInternetGateway
+
+  SubnetRouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      SubnetId: !Ref 'nfsSubnet1'
-      RouteTableId: !Ref 'nfsRouteTable'
-  nfsRoutetoInternet:
-    Type: AWS::EC2::Route
-    DependsOn: nfsInternetGateway
-    Properties:
-      RouteTableId: !Ref 'nfsRouteTable'
-      DestinationCidrBlock: 0.0.0.0/0
-      GatewayId: !Ref 'nfsInternetGateway'
+      SubnetId: !Ref nfsPublicSubnet
+      RouteTableId: !Ref nfsRouteTable
 
+  nfsNatGatewayEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  nfsNatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt nfsNatGatewayEIP.AllocationId
+      SubnetId: !Ref nfsPublicSubnet
+
+  nfsPrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref nfsVPC
+      Tags:
+        - Key: Name
+          Value: nfsPrivateRouteTable
+
+  nfsPrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref nfsPrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref nfsNatGateway
+
+  nfsPrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref nfsPrivateSubnet
+      RouteTableId: !Ref nfsPrivateRouteTable
   # We use the same security group for all four resources.  Technically port 80
   # isn't needed for the NFS server and the application server, but nothing is
   # listening on those ports on those servers.
@@ -105,8 +150,6 @@ Resources:
           FromPort: '80'
           ToPort: '80'
           CidrIp: '0.0.0.0/0'
-
-  # We use this so we can limit access on this port to the SG
   nfsSecurityGroupIngress:
     Type: AWS::EC2::SecurityGroupIngress
     DependsOn: nfsSecurityGroup
@@ -116,7 +159,6 @@ Resources:
       ToPort: '2049'
       FromPort: '2049'
       SourceSecurityGroupId: !Ref 'nfsSecurityGroup'
-
 
   nfsServerInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -202,11 +244,11 @@ Resources:
             DeleteOnTermination: 'true'
             VolumeType: gp2
       NetworkInterfaces:
-        - AssociatePublicIpAddress: 'true'
+        - AssociatePublicIpAddress: 'false'
           DeviceIndex: '0'
           GroupSet:
             - !Ref 'nfsSecurityGroup'
-          SubnetId: !Ref 'nfsSubnet1'
+          SubnetId: !Ref 'nfsPrivateSubnet'
       UserData:
         Fn::Base64:
           !Sub |
@@ -235,16 +277,24 @@ Resources:
             DeleteOnTermination: 'true'
             VolumeType: gp2
       NetworkInterfaces:
-        - AssociatePublicIpAddress: 'true'
+        - AssociatePublicIpAddress: 'false'
           DeviceIndex: '0'
           GroupSet:
             - !Ref 'nfsSecurityGroup'
-          SubnetId: !Ref 'nfsSubnet1'
+          SubnetId: !Ref 'nfsPrivateSubnet'
       UserData: !Base64
         Fn::Join:
           - ''
           - - "#!/bin/bash\n"
             - "sudo mkdir /mnt/data\n"
+
+  nfsEC2InstanceConnectEndpoint:
+    Type: AWS::EC2::InstanceConnectEndpoint
+    Properties:
+      PreserveClientIp: false
+      SecurityGroupIds: 
+        - !Ref nfsSecurityGroup
+      SubnetId: !Ref nfsPrivateSubnet
 
 Outputs:
   nfsServerPrivateIP:
@@ -253,3 +303,15 @@ Outputs:
   appServerPrivateIP:
     Description: Application Server Private IP Address
     Value: !GetAtt appServer.PrivateIp
+  VPCId:
+    Description: VPC ID
+    Value: !Ref nfsVPC
+  PublicSubnetId:
+    Description: Public Subnet ID
+    Value: !Ref nfsPublicSubnet
+  PrivateSubnetId:
+    Description: Private Subnet ID
+    Value: !Ref nfsPrivateSubnet
+  nfsEC2InstanceConnectEndpointId:
+    Description: EC2 Instance Connect Endpoint ID
+    Value: !Ref nfsEC2InstanceConnectEndpoint
