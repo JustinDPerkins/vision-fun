@@ -53,7 +53,7 @@ echo "Listing S3 buckets using inline environment variables:"
 AWS_ACCESS_KEY_ID="${ACCESS_KEY}" \
 AWS_SECRET_ACCESS_KEY="${SECRET_KEY}" \
 AWS_DEFAULT_REGION="us-east-1" \
-aws s3 ls
+aws s3 ls --profile newuser
 
 # Clean up temporary file
 rm new_user_keys.json
