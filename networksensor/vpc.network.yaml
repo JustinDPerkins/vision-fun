@@ -180,6 +180,8 @@ Resources:
           ToPort: 3389
           CidrIp: 10.10.0.0/16
         - IpProtocol: -1
+          FromPort: 0
+          ToPort: 65535
           CidrIp: 10.10.0.0/16
       SecurityGroupEgress:
         - IpProtocol: tcp
