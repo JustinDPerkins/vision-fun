@@ -17,8 +17,8 @@ Welcome to the Container Security Challenge! You're a DevSecOps engineer tasked 
 
 FinSecure needs a test Kubernetes cluster to host its applications. You have two options:
 
-- **Option A**: Use the provided CloudFormation template (cluster-template.yaml) to deploy an EKS cluster in your AWS account. Deploy the template, retrieve the kubeconfig, and verify access.
-- **Option B**: Access a pre-built cluster using credentials provided separately (check kubeconfig.yaml or contact the challenge admin).
+- **Option A**: Use the provided CloudFormation template (cloudformation.yaml) to deploy an EKS cluster in your AWS account. Deploy the template, retrieve the kubeconfig, and verify access.
+- **Option B**: Build your own cluster however you want with EKSCTL and CLI.
 
 **Objective**:
 - Gain access to the cluster
