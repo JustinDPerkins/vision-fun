@@ -1,6 +1,6 @@
 # Container Security Challenge
 
-Welcome to the Container Security Challenge! You're a DevSecOps engineer tasked with securing two applications for a fictional company, FinSecure, before a compliance audit. Your goal is to set up a Kubernetes cluster, deploy containerized apps, enforce security policies, and investigate runtime violations. This challenge is hands-on and designed to test your skills in Kubernetes, Helm, and container security. Expect to struggle, troubleshoot, and learn by diving into documentation.
+Welcome to the Container Security Challenge! You're a DevSecOps engineer tasked helping with a customer PoC/Demo. Your goal is to set up a Kubernetes cluster, deploy containerized apps, enforce security policies, and investigate runtime violations. This challenge is hands-on and designed to test your skills in Kubernetes, Helm, and container security. Expect to struggle, troubleshoot, and learn by diving into documentation.
 
 > **Note**: Instructions are intentionally high-level. Use official documentation for Kubernetes, Helm, and the provided container security tool to complete tasks. Success depends on your ability to explore, debug, and verify.
 
