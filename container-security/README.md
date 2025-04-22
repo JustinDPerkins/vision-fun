@@ -42,6 +42,9 @@ Before deploying the nginx image, FinSecure requires all images to be scanned fo
 - Scan the nginx:latest image using the TMAS CLI
 - Save the scan results (e.g., JSON format)
 
+**Links**
+- https://hub.docker.com/_/nginx
+
 ### Task 4: Setup a policy for deployment
 
 FinSecure Global is looking to test a couple scenarios with our container security, so we will need to create one policy with settings for two different namespaces. Follow the instructions below to create and configure these two set of settings in the policy.
@@ -101,26 +104,10 @@ FinSecure monitors containers for suspicious activity. You'll simulate malicious
 - Use kubectl exec to access the nginx pod (check console for logs)
 - Perform actions to trigger security rules (search for secrets, using a network tool like nmap or netscan)
 
-## Evaluation Criteria
+### Task 8: Check Container Security Logs
 
-- **Completion**: All tasks (1-7) are completed successfully
-- **Verification**: Pods are running, policies are enforced, and alerts are triggered as expected
-- **Troubleshooting**: You've debugged issues using logs, events, and documentation
-- **Documentation**: For Task 7, provide a brief explanation of the triggered rules (e.g., in results.txt)
+The last thing the customer wants from us is to understand how they will get logs from our container security solution. They want to create an automated process for this if something were to go wrong in the future. Let's give them a couple examples of how we can check our container security logs.
 
-## Resources
+**Links**:
+- https://docs.trendmicro.com/en-us/documentation/article/trend-vision-one-container-security-faqs
 
-- [Kubernetes Documentation](https://kubernetes.io/docs/)
-- [Helm Documentation](https://helm.sh/docs/)
-- Security Tool Documentation: [Link provided in challenge resources]
-- TMAS CLI Guide: [Link provided in security tool docs]
-- [AWS EKS Documentation](https://docs.aws.amazon.com/eks/) (if using CloudFormation)
-
-## Notes
-
-- Expect tasks to take 2-4 hours, depending on experience
-- Save all commands and outputs for reference (e.g., in a terminal log)
-- If stuck, focus on error messages and search the provided documentation
-- Avoid sharing solutions with others—learning comes from the struggle!
-
-Good luck, and secure those containers!
